@@ -1,0 +1,66 @@
+[project]
+name = "amazing-web-url-reader"
+version = "0.1.0"
+description = "Playwright-powered MCP server that turns dynamic pages into Markdown"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Amazing Web Tools" }
+]
+keywords = ["playwright", "mcp", "markdown", "summarization"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Topic :: Internet :: WWW/HTTP",
+]
+dependencies = [
+    "beautifulsoup4>=4.12.3",
+    "lxml>=5.1.0",
+    "mcp>=1.2.0",
+    "playwright>=1.48.0",
+]
+
+[project.scripts]
+amazing-web-url-reader = "main:main"
+
+[tool.setuptools]
+py-modules = ["amazing_web_url_reader", "main"]
+
+[dependency-groups]
+dev = [
+    "coverage[toml]>=7.6.4",
+    "pytest>=8.3.3",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.6.9",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra --cov=amazing_web_url_reader --cov=tests --cov-report=term-missing --cov-fail-under=75"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["."]
+
+[tool.coverage.run]
+branch = true
+source = ["amazing_web_url_reader", "tests"]
+
+[tool.coverage.report]
+fail_under = 75
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "C4"]
+ignore = ["E203"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "lf"
