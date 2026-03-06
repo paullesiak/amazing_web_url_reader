@@ -51,11 +51,9 @@ def test_chunk_text_by_chars():
 
 def test_get_smart_timeout():
     """Test the smart timeout function."""
-    assert get_smart_timeout("https://www.nytimes.com/some/article") == 45000
-    assert get_smart_timeout("https://twitter.com/user/status") == 45000
-    assert get_smart_timeout("https://www.reddit.com/r/some/post") == 45000
-    assert get_smart_timeout("https://www.foxnews.com/story") == 45000
-    assert get_smart_timeout("https://example.com") == 30000
+    assert get_smart_timeout("https://example.com") == 45000
+    assert get_smart_timeout("https://example.com/a/b/c/d") == 60000
+    assert get_smart_timeout("https://example.com?a=1") == 60000
 
 
 def test_get_site_specific_selectors():

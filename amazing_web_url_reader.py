@@ -123,11 +123,46 @@ import mcp.server.stdio
 import mcp.types as types
 from bs4 import BeautifulSoup
 from mcp.server import InitializationOptions, NotificationOptions, Server
-from playwright.async_api import async_playwright, Page, Browser
+from playwright.async_api import async_playwright, Page, Browser, TimeoutError as PlaywrightTimeout
+
+class _MCPLogHandler(logging.Handler):
+    """Mirror Python logging records to MCP logMessage notifications when possible."""
+
+    _LEVEL_MAP: dict[int, str] = {
+        logging.DEBUG: "debug",
+        logging.INFO: "info",
+        logging.WARNING: "warning",
+        logging.ERROR: "error",
+        logging.CRITICAL: "critical",
+    }
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        try:
+            session = server.request_context.session  # type: ignore[attr-defined]
+        except LookupError:
+            return
+
+        level = self._LEVEL_MAP.get(record.levelno, "info")
+        message = self.format(record)
+
+        async def _send():
+            try:
+                await session.send_log_message(level=level, data=message, logger=record.name)
+            except Exception:
+                pass
+
+        loop.create_task(_send())
+
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+logger.addHandler(_MCPLogHandler())
 # Opt-in debug logging when MCP_DEBUG is set
 if os.environ.get("MCP_DEBUG"):
     logger.setLevel(logging.DEBUG)
@@ -322,10 +357,31 @@ async def scroll_to_load_content(page: Page) -> None:
 
 
 def get_smart_timeout(url: str) -> int:
-    """Get timeout based on URL domain patterns."""
-    heavy_js_domains = ['nytimes.com', 'twitter.com', 'reddit.com', 'foxnews.com']
-    domain = urlparse(url).netloc.lower()
-    return 45000 if any(site in domain for site in heavy_js_domains) else 30000
+    """Return a conservative navigation timeout based on URL complexity."""
+    parsed = urlparse(url)
+    base = 45000
+    if parsed.query or parsed.path.count("/") > 3:
+        base += 15000
+    return base
+
+
+async def _maybe_wait_for_network_idle(page: Page, timeout_ms: int = 15000) -> None:
+    """Best-effort wait for networkidle, falling back after the budget expires."""
+    if timeout_ms <= 0:
+        return
+    try:
+        await page.wait_for_load_state("networkidle", timeout=timeout_ms)
+        return
+    except PlaywrightTimeout:
+        logger.info(
+            "Page never reached networkidle within %sms; continuing with rendered DOM",
+            timeout_ms,
+        )
+    # Give 'load' a short chance before returning control
+    try:
+        await page.wait_for_load_state("load", timeout=max(2000, timeout_ms // 2))
+    except PlaywrightTimeout:
+        logger.debug("Load state also timed out; proceeding regardless")
 
 
 async def fetch_with_playwright(url: str, wait_for_selector: Optional[str] = None, 
@@ -344,7 +400,7 @@ async def fetch_with_playwright(url: str, wait_for_selector: Optional[str] = Non
     try:
         # Navigate to the page with smart timeout
         timeout = get_smart_timeout(url)
-        await page.goto(url, wait_until='networkidle', timeout=timeout)
+        await page.goto(url, wait_until='domcontentloaded', timeout=timeout)
         
         # Wait for specific selector if provided
         if wait_for_selector:
@@ -353,6 +409,7 @@ async def fetch_with_playwright(url: str, wait_for_selector: Optional[str] = Non
             except:
                 logger.warning(f"Selector '{wait_for_selector}' not found, continuing anyway")
         
+        await _maybe_wait_for_network_idle(page)
         # Additional wait time for dynamic content
         await page.wait_for_timeout(wait_time)
         

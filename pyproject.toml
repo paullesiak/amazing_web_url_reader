@@ -49,7 +49,7 @@ source = ["amazing_web_url_reader", "tests"]
 [tool.coverage.report]
 fail_under = 75
 show_missing = true
-skip_covered = true
+skip_covered = false
 
 [tool.ruff]
 line-length = 100

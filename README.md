@@ -5,9 +5,9 @@ Playwright-backed MCP server that renders modern web apps in Chromium, strips no
 ## Quick Start
 1. Install the Playwright Chromium binary once:
    ```bash
-   uvx --from git+https://github.com/paullesiak/amazing_web_url_reader python amazing_web_url_reader.py --install-browser
+   uvx --from git+https://github.com/paullesiak/amazing_web_url_reader python -m amazing_web_url_reader --install-browser
    ```
-2. Point your MCP-aware agent at the same `uvx` command (see examples below). The executable automatically stays current with the repository’s main branch.
+2. Point your MCP-aware agent at the same `uvx` command (see examples below). Using `python -m amazing_web_url_reader` works from any working directory, so hosts like LM Studio don’t have to know where the repo lives. The executable automatically stays current with the repository’s main branch. To force uvx to refresh the Git checkout each time, add `UVX_ALWAYS_REFRESH=1` to the MCP server environment (or run `uvx --upgrade ...` manually when you want to pull the latest changes).
 
 ## Configuration Options
 | Variable | Required? | Default | Purpose |
@@ -32,7 +32,8 @@ args = [
   "--from",  # required: tell uvx to pull straight from GitHub
   "git+https://github.com/paullesiak/amazing_web_url_reader",
   "python",
-  "amazing_web_url_reader.py"  # use main.py if you prefer the shim; both work
+  "-m",
+  "amazing_web_url_reader"
 ]
 
 [mcp_servers.env]
@@ -54,7 +55,8 @@ MCP_DEBUG = "0"
         "--from",
         "git+https://github.com/paullesiak/amazing_web_url_reader",
         "python",
-        "main.py"
+        "-m",
+        "amazing_web_url_reader"
       ],
       "env": {
         "AMAZING_READER_SUMMARY_TOKENS": "0",

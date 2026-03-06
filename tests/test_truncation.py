@@ -129,6 +129,9 @@ def _install_third_party_stubs() -> callable:
     async_api_mod.async_playwright = async_playwright
     async_api_mod.Page = Page
     async_api_mod.Browser = Browser
+    class TimeoutError(Exception):
+        pass
+    async_api_mod.TimeoutError = TimeoutError
 
     _register("playwright", playwright_mod)
     _register("playwright.async_api", async_api_mod)

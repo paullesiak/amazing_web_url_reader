@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 import amazing_web_url_reader as awur
+from playwright.async_api import TimeoutError as PlaywrightTimeout
 
 
 @pytest.fixture(autouse=True)
@@ -102,6 +103,7 @@ async def test_fetch_with_playwright_sets_accept_header(monkeypatch):
     monkeypatch.setattr("amazing_web_url_reader.get_browser", AsyncMock(return_value=mock_browser))
     monkeypatch.setattr("amazing_web_url_reader.dismiss_popups", AsyncMock())
     monkeypatch.setattr("amazing_web_url_reader.scroll_to_load_content", AsyncMock())
+    monkeypatch.setattr("amazing_web_url_reader._maybe_wait_for_network_idle", AsyncMock())
 
     content = await awur.fetch_with_playwright("https://example.com", wait_time=0)
 
@@ -109,4 +111,18 @@ async def test_fetch_with_playwright_sets_accept_header(monkeypatch):
     kwargs = mock_browser.new_context.call_args.kwargs
     headers = kwargs["extra_http_headers"]
     assert headers["Accept"].startswith("text/markdown")
-    mock_page.goto.assert_awaited_once_with("https://example.com", wait_until="networkidle", timeout=30000)
+    mock_page.goto.assert_awaited_once_with("https://example.com", wait_until="domcontentloaded", timeout=45000)
+
+
+@pytest.mark.asyncio
+async def test_maybe_wait_for_network_idle_handles_timeout(monkeypatch):
+    page = AsyncMock()
+    page.wait_for_load_state = AsyncMock(side_effect=[PlaywrightTimeout("timeout"), None])
+
+    await awur._maybe_wait_for_network_idle(page, timeout_ms=1000)
+
+    assert page.wait_for_load_state.await_count == 2
+    first_state = page.wait_for_load_state.await_args_list[0].args[0]
+    second_state = page.wait_for_load_state.await_args_list[1].args[0]
+    assert first_state == "networkidle"
+    assert second_state == "load"
