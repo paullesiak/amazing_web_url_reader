@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import patch
 
-import pytest
-
 from main import main as main_entry_point
 
 

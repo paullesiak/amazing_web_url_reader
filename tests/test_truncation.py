@@ -5,13 +5,11 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
-import os
 import sys
 import types
 from pathlib import Path
 
 import pytest
-
 
 ROOT = Path(__file__).resolve().parents[1]
 TEST_URL = "https://example.com"
@@ -129,8 +127,10 @@ def _install_third_party_stubs() -> callable:
     async_api_mod.async_playwright = async_playwright
     async_api_mod.Page = Page
     async_api_mod.Browser = Browser
+
     class TimeoutError(Exception):
         pass
+
     async_api_mod.TimeoutError = TimeoutError
 
     _register("playwright", playwright_mod)

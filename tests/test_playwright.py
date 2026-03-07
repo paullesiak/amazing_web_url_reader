@@ -6,9 +6,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from playwright.async_api import TimeoutError as PlaywrightTimeout
 
 import amazing_web_url_reader as awur
-from playwright.async_api import TimeoutError as PlaywrightTimeout
 
 
 @pytest.fixture(autouse=True)
@@ -33,15 +33,18 @@ async def test_get_browser_reuses_browser_instance():
     assert first_browser is mock_browser
     assert second_browser is mock_browser
     mock_async_playwright.start.assert_called_once()
-    mock_playwright.chromium.launch.assert_awaited_once_with(headless=True, args=[
-        '--disable-blink-features=AutomationControlled',
-        '--disable-dev-shm-usage',
-        '--disable-web-security',
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-accelerated-2d-canvas',
-        '--disable-gpu',
-    ])
+    mock_playwright.chromium.launch.assert_awaited_once_with(
+        headless=True,
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--disable-dev-shm-usage",
+            "--disable-web-security",
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-accelerated-2d-canvas",
+            "--disable-gpu",
+        ],
+    )
 
 
 @pytest.mark.asyncio
@@ -111,7 +114,9 @@ async def test_fetch_with_playwright_sets_accept_header(monkeypatch):
     kwargs = mock_browser.new_context.call_args.kwargs
     headers = kwargs["extra_http_headers"]
     assert headers["Accept"].startswith("text/markdown")
-    mock_page.goto.assert_awaited_once_with("https://example.com", wait_until="domcontentloaded", timeout=45000)
+    mock_page.goto.assert_awaited_once_with(
+        "https://example.com", wait_until="domcontentloaded", timeout=45000
+    )
 
 
 @pytest.mark.asyncio

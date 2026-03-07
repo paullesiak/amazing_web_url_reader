@@ -1,6 +1,6 @@
 # Amazing Web URL Reader
 
-Playwright-backed MCP server that renders modern web apps in Chromium, strips noise, converts the DOM to Markdown, and (optionally) summarizes the result for downstream LLM tooling. By default we send `Accept: text/markdown, text/plain;q=0.99, text/html;q=0.9, */*;q=0.8`; override via `AMAZING_READER_ACCEPT_HEADER` if your client needs something else.
+Markdown-first MCP server that prefers native `text/markdown` responses when a site supports them, falls back to Playwright rendering for HTML-only or JavaScript-heavy pages, and (optionally) summarizes the result for downstream LLM tooling. By default we send `Accept: text/markdown, text/plain;q=0.99, text/html;q=0.9, */*;q=0.8`; override via `AMAZING_READER_ACCEPT_HEADER` if your client needs something else.
 
 ## Quick Start
 1. Install the Playwright Chromium binary once:
@@ -12,13 +12,15 @@ Playwright-backed MCP server that renders modern web apps in Chromium, strips no
 ## Configuration Options
 | Variable | Required? | Default | Purpose |
 | --- | --- | --- | --- |
-| `AMAZING_READER_ACCEPT_HEADER` | optional | `text/markdown, text/plain;q=0.99, text/html;q=0.9, */*;q=0.8` | Advertise a different `Accept` header to the target site. |
+| `AMAZING_READER_ACCEPT_HEADER` | optional | `text/markdown, text/plain;q=0.99, text/html;q=0.9, */*;q=0.8` | Advertise a different `Accept` header to the target site. Keep `text/markdown` in the value to preserve native markdown negotiation. |
 | `AMAZING_READER_SUMMARY_TOKENS` | optional | unset (no summarization) | Global fallback token target when `use_ollama_summarization` is true but the request omits `summary_target_tokens`. |
-| `OLLAMA_HOST` | optional | `http://ollamalb.local:11434` | Default host for the summarization backend. |
+| `OLLAMA_HOST` | optional | `http://localhost:11434` | Default host for the summarization backend. |
 | `OLLAMA_MODEL` | optional | `gpt-oss:20b` | Default LLM for summarization. |
 | `MCP_DEBUG` | optional | unset | Set to `1` for verbose logging (stdio wiring, tracing, etc.). |
 
 Tool arguments (`read_web_url_amazing`) mirror the MCP schema: `url` (required) plus optional `wait_for_selector`, `wait_time`, `scroll_to_bottom`, `truncate`, `max_length`, `use_ollama_summarization`, `summary_target_tokens`, `ollama_host`, and `ollama_model`.
+
+When the upstream server responds with `Content-Type: text/markdown`, the tool returns that body directly and reports `render_method: "native_markdown"`. Otherwise it falls back to `render_method: "playwright"` after rendering and extracting content from the page.
 
 ## MCP Agent Examples
 

@@ -8,7 +8,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SERVER = ROOT / "amazing_web_url_reader.py"
 
@@ -69,7 +68,10 @@ def test_raw_stdio_handshake(tmp_path):
         init = _build_initialize_request()
         _send_message(proc, init)
         init_resp = json.loads(_recv_message(proc))
-        assert init_resp.get("result", {}).get("serverInfo", {}).get("name") == "amazing-web-url-reader"
+        assert (
+            init_resp.get("result", {}).get("serverInfo", {}).get("name")
+            == "amazing-web-url-reader"
+        )
 
         _send_message(proc, {"jsonrpc": "2.0", "method": "notifications/initialized"})
 

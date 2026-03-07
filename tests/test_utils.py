@@ -4,21 +4,35 @@ from __future__ import annotations
 
 import os
 from unittest.mock import patch
-
-import pytest
+from urllib.error import HTTPError
 
 from amazing_web_url_reader import (
     _chunk_text_by_chars,
     _estimate_tokens_from_text,
+    _fetch_native_markdown,
     _filter_content_noise,
     _get_preferred_accept_header,
     _html_to_markdown_advanced,
     _ollama_generate,
     _summarize_map_reduce,
     _summarize_single_pass,
-    get_site_specific_selectors,
     get_smart_timeout,
 )
+
+
+class _FakeResponse:
+    def __init__(self, body: bytes, headers: dict[str, str]):
+        self._body = body
+        self.headers = headers
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
 
 
 def test_get_preferred_accept_header_default():
@@ -56,19 +70,59 @@ def test_get_smart_timeout():
     assert get_smart_timeout("https://example.com?a=1") == 60000
 
 
-def test_get_site_specific_selectors():
-    """Test the site-specific selector function."""
-    assert get_site_specific_selectors("https://www.cnn.com/article") == [
-        ".article__content",
-        ".zn-body__paragraph",
-        "#body-text",
-    ]
-    assert get_site_specific_selectors("https://www.example.com") == []
-    assert get_site_specific_selectors("https://edition.cnn.com/2020") == [
-        ".article__content",
-        ".zn-body__paragraph",
-        "#body-text",
-    ]
+@patch("amazing_web_url_reader.urllib_request.urlopen")
+def test_fetch_native_markdown_success(mock_urlopen):
+    mock_urlopen.return_value = _FakeResponse(
+        b"# Native\n\nHello",
+        {
+            "Content-Type": "text/markdown; charset=utf-8",
+            "X-Markdown-Tokens": "42",
+        },
+    )
+
+    with patch.dict(os.environ, {}, clear=True):
+        result = _fetch_native_markdown("https://example.com/article")
+
+    assert result is not None
+    content, meta = result
+    assert content == "# Native\n\nHello"
+    assert meta == {
+        "source_content_type": "text/markdown; charset=utf-8",
+        "markdown_tokens": 42,
+    }
+
+
+@patch("amazing_web_url_reader.urllib_request.urlopen")
+def test_fetch_native_markdown_skips_when_accept_header_disables_markdown(mock_urlopen):
+    with patch.dict(os.environ, {"AMAZING_READER_ACCEPT_HEADER": "text/html"}, clear=True):
+        assert _fetch_native_markdown("https://example.com/article") is None
+
+    mock_urlopen.assert_not_called()
+
+
+@patch("amazing_web_url_reader.urllib_request.urlopen")
+def test_fetch_native_markdown_returns_none_for_html_response(mock_urlopen):
+    mock_urlopen.return_value = _FakeResponse(
+        b"<html></html>",
+        {"Content-Type": "text/html; charset=utf-8"},
+    )
+
+    with patch.dict(os.environ, {}, clear=True):
+        assert _fetch_native_markdown("https://example.com/article") is None
+
+
+@patch("amazing_web_url_reader.urllib_request.urlopen")
+def test_fetch_native_markdown_returns_none_on_http_error(mock_urlopen):
+    mock_urlopen.side_effect = HTTPError(
+        "https://example.com/article",
+        403,
+        "Forbidden",
+        hdrs=None,
+        fp=None,
+    )
+
+    with patch.dict(os.environ, {}, clear=True):
+        assert _fetch_native_markdown("https://example.com/article") is None
 
 
 def test_filter_content_noise():
@@ -76,10 +130,7 @@ def test_filter_content_noise():
     assert _filter_content_noise("hello world") == "hello world"
     assert _filter_content_noise("Guest favorite Guest favorite") == ""
     assert _filter_content_noise("We use cookies to improve your experience.") == ""
-    assert (
-        _filter_content_noise("Share on Facebook Share on Twitter")
-        == ""
-    )
+    assert _filter_content_noise("Share on Facebook Share on Twitter") == ""
     assert _filter_content_noise("Home > Section > Article Home > Section > Article") == ""
 
 
