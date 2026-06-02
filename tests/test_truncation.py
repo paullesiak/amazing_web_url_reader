@@ -180,7 +180,7 @@ def stubbed_server_fixture(server_module):
     """Replace network-heavy helpers with deterministic fakes."""
 
     async def fake_fetch(url, wait_for_selector=None, wait_time=0, scroll_to_bottom=False):  # noqa: ARG001
-        return MOCK_HTML
+        return MOCK_HTML, {"http_status_code": 200}
 
     def fake_markdown(html, url=None):  # noqa: ARG001
         return MOCK_MARKDOWN

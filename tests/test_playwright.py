@@ -96,7 +96,7 @@ async def test_fetch_with_playwright_sets_accept_header(monkeypatch):
     mock_browser = AsyncMock()
     mock_context = AsyncMock()
     mock_page = AsyncMock()
-    mock_page.goto = AsyncMock()
+    mock_page.goto = AsyncMock(return_value=SimpleNamespace(status=418))
     mock_page.wait_for_timeout = AsyncMock()
     mock_page.wait_for_selector = AsyncMock()
     mock_browser.new_context.return_value = mock_context
@@ -108,9 +108,10 @@ async def test_fetch_with_playwright_sets_accept_header(monkeypatch):
     monkeypatch.setattr("amazing_web_url_reader.scroll_to_load_content", AsyncMock())
     monkeypatch.setattr("amazing_web_url_reader._maybe_wait_for_network_idle", AsyncMock())
 
-    content = await awur.fetch_with_playwright("https://example.com", wait_time=0)
+    content, meta = await awur.fetch_with_playwright("https://example.com", wait_time=0)
 
     assert content == "<html></html>"
+    assert meta == {"http_status_code": 418}
     kwargs = mock_browser.new_context.call_args.kwargs
     headers = kwargs["extra_http_headers"]
     assert headers["Accept"].startswith("text/markdown")

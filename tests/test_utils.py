@@ -8,6 +8,7 @@ from urllib.error import HTTPError
 
 from amazing_web_url_reader import (
     _chunk_text_by_chars,
+    _clean_text_for_character_set,
     _estimate_tokens_from_text,
     _fetch_native_markdown,
     _filter_content_noise,
@@ -21,12 +22,16 @@ from amazing_web_url_reader import (
 
 
 class _FakeResponse:
-    def __init__(self, body: bytes, headers: dict[str, str]):
+    def __init__(self, body: bytes, headers: dict[str, str], status: int = 200):
         self._body = body
         self.headers = headers
+        self.status = status
 
     def read(self) -> bytes:
         return self._body
+
+    def getcode(self) -> int:
+        return self.status
 
     def __enter__(self):
         return self
@@ -78,6 +83,7 @@ def test_fetch_native_markdown_success(mock_urlopen):
             "Content-Type": "text/markdown; charset=utf-8",
             "X-Markdown-Tokens": "42",
         },
+        status=203,
     )
 
     with patch.dict(os.environ, {}, clear=True):
@@ -88,8 +94,31 @@ def test_fetch_native_markdown_success(mock_urlopen):
     assert content == "# Native\n\nHello"
     assert meta == {
         "source_content_type": "text/markdown; charset=utf-8",
+        "http_status_code": 203,
         "markdown_tokens": 42,
     }
+
+
+def test_clean_text_for_character_set_preserves_useful_unicode():
+    text = "Cafe\u0301 \u5317\u4eac \u0645\u0631\u062d\u0628\u0627 \U0001f642"
+
+    assert _clean_text_for_character_set(text) == (
+        "Caf\u00e9 \u5317\u4eac \u0645\u0631\u062d\u0628\u0627 \U0001f642"
+    )
+
+
+def test_clean_text_for_character_set_removes_pathological_characters():
+    text = "ok\x00\x1b\u202e\u200b\ue000bad"
+
+    cleaned = _clean_text_for_character_set(text)
+
+    assert cleaned == "okbad"
+
+
+def test_clean_text_for_character_set_can_force_ascii():
+    text = "Caf\u00e9 \u5317\u4eac"
+
+    assert _clean_text_for_character_set(text, "ascii") == "Cafe "
 
 
 @patch("amazing_web_url_reader.urllib_request.urlopen")

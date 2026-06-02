@@ -18,9 +18,9 @@ Markdown-first MCP server that prefers native `text/markdown` responses when a s
 | `OLLAMA_MODEL` | optional | `gpt-oss:20b` | Default LLM for summarization. |
 | `MCP_DEBUG` | optional | unset | Set to `1` for verbose logging (stdio wiring, tracing, etc.). |
 
-Tool arguments (`read_web_url_amazing`) mirror the MCP schema: `url` (required) plus optional `wait_for_selector`, `wait_time`, `scroll_to_bottom`, `truncate`, `max_length`, `use_ollama_summarization`, `summary_target_tokens`, `ollama_host`, and `ollama_model`.
+Tool arguments (`read_web_url_amazing`) mirror the MCP schema: `url` (required) plus optional `wait_for_selector`, `wait_time`, `scroll_to_bottom`, `truncate`, `max_length`, `character_set`, `use_ollama_summarization`, `summary_target_tokens`, `ollama_host`, and `ollama_model`. `character_set` defaults to `safe_unicode`, which strips pathological controls and invisible directionality marks while preserving normal Unicode; use `unicode` for raw output or `ascii` for strict ASCII-only output.
 
-When the upstream server responds with `Content-Type: text/markdown`, the tool returns that body directly and reports `render_method: "native_markdown"`. Otherwise it falls back to `render_method: "playwright"` after rendering and extracting content from the page.
+When the upstream server responds with `Content-Type: text/markdown`, the tool returns that body directly and reports `render_method: "native_markdown"`. Otherwise it falls back to `render_method: "playwright"` after rendering and extracting content from the page. Successful responses include `http_status_code` when the fetch layer can observe one.
 
 ## MCP Agent Examples
 

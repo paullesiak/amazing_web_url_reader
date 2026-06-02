@@ -13,7 +13,10 @@ import amazing_web_url_reader as awur
 @pytest.mark.asyncio
 async def test_handle_call_tool_success(monkeypatch):
     async def fake_fetch(url, wait_for_selector=None, wait_time=0, scroll_to_bottom=True):  # noqa: ARG001
-        return "<html><body><article><p>Hello world</p></article></body></html>"
+        return (
+            "<html><body><article><p>Hello world</p></article></body></html>",
+            {"http_status_code": 200},
+        )
 
     def fake_markdown(html, url=None):  # noqa: ARG001
         return "# Rendered\n\nHello world"
@@ -33,6 +36,8 @@ async def test_handle_call_tool_success(monkeypatch):
     assert payload["status"] == "success"
     assert payload["content"].startswith("# Rendered")
     assert payload["render_method"] == "playwright"
+    assert payload["http_status_code"] == 200
+    assert payload["character_set"] == "safe_unicode"
     assert payload["summarization"]["enabled"] is False
 
 
@@ -56,6 +61,7 @@ async def test_handle_call_tool_uses_native_markdown(monkeypatch):
             "# Native\n\nHello world",
             {
                 "source_content_type": "text/markdown; charset=utf-8",
+                "http_status_code": 204,
                 "markdown_tokens": 42,
             },
         ),
@@ -72,6 +78,7 @@ async def test_handle_call_tool_uses_native_markdown(monkeypatch):
     assert payload["content"].startswith("# Native")
     assert payload["render_method"] == "native_markdown"
     assert payload["source_content_type"] == "text/markdown; charset=utf-8"
+    assert payload["http_status_code"] == 204
     assert payload["markdown_tokens"] == 42
     fetch_with_playwright.assert_not_called()
 
@@ -79,7 +86,10 @@ async def test_handle_call_tool_uses_native_markdown(monkeypatch):
 @pytest.mark.asyncio
 async def test_handle_call_tool_summarization(monkeypatch):
     async def fake_fetch(url, wait_for_selector=None, wait_time=0, scroll_to_bottom=True):  # noqa: ARG001
-        return "<html><body><article>" + ("A" * 2000) + "</article></body></html>"
+        return (
+            "<html><body><article>" + ("A" * 2000) + "</article></body></html>",
+            {"http_status_code": 200},
+        )
 
     def fake_markdown(html, url=None):  # noqa: ARG001
         return "A" * 2000
@@ -112,7 +122,10 @@ async def test_handle_call_tool_summarization(monkeypatch):
 @pytest.mark.asyncio
 async def test_handle_call_tool_defaults_ollama_host_to_localhost(monkeypatch):
     async def fake_fetch(url, wait_for_selector=None, wait_time=0, scroll_to_bottom=True):  # noqa: ARG001
-        return "<html><body><article>" + ("A" * 2000) + "</article></body></html>"
+        return (
+            "<html><body><article>" + ("A" * 2000) + "</article></body></html>",
+            {"http_status_code": 200},
+        )
 
     def fake_markdown(html, url=None):  # noqa: ARG001
         return "A" * 2000
@@ -156,7 +169,10 @@ async def test_handle_call_tool_rejects_unknown_tool():
 @pytest.mark.asyncio
 async def test_handle_call_tool_truncates_content(monkeypatch):
     async def fake_fetch(url, wait_for_selector=None, wait_time=0, scroll_to_bottom=True):  # noqa: ARG001
-        return "<html><body><article>" + ("A" * 200) + "</article></body></html>"
+        return (
+            "<html><body><article>" + ("A" * 200) + "</article></body></html>",
+            {"http_status_code": 200},
+        )
 
     def fake_markdown(html, url=None):  # noqa: ARG001
         return "A" * 200
@@ -177,10 +193,77 @@ async def test_handle_call_tool_truncates_content(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_handle_call_tool_applies_character_set(monkeypatch):
+    async def fake_fetch(url, wait_for_selector=None, wait_time=0, scroll_to_bottom=True):  # noqa: ARG001
+        return (
+            "<html><body><article><p>ignored</p></article></body></html>",
+            {"http_status_code": 404},
+        )
+
+    def fake_markdown(html, url=None):  # noqa: ARG001
+        return "Caf\u00e9\x00\u202ebad"
+
+    monkeypatch.setattr("amazing_web_url_reader._fetch_native_markdown", lambda url: None)
+    monkeypatch.setattr(
+        "amazing_web_url_reader.fetch_with_playwright", AsyncMock(side_effect=fake_fetch)
+    )
+    monkeypatch.setattr("amazing_web_url_reader._html_to_markdown_advanced", fake_markdown)
+
+    result = await awur.handle_call_tool(
+        name="read_web_url_amazing",
+        arguments={
+            "url": "https://example.com/not-found",
+            "truncate": False,
+            "character_set": "ascii",
+        },
+    )
+
+    payload = json.loads(result[0].text)
+    assert payload["status"] == "success"
+    assert payload["http_status_code"] == 404
+    assert payload["content"] == "Cafebad"
+    assert payload["character_set"] == "ascii"
+
+
+@pytest.mark.asyncio
+async def test_handle_call_tool_cleans_summarization_output(monkeypatch):
+    async def fake_fetch(url, wait_for_selector=None, wait_time=0, scroll_to_bottom=True):  # noqa: ARG001
+        return (
+            "<html><body><article>content</article></body></html>",
+            {"http_status_code": 200},
+        )
+
+    monkeypatch.setattr("amazing_web_url_reader._fetch_native_markdown", lambda url: None)
+    monkeypatch.setattr(
+        "amazing_web_url_reader.fetch_with_playwright", AsyncMock(side_effect=fake_fetch)
+    )
+    monkeypatch.setattr("amazing_web_url_reader._html_to_markdown_advanced", lambda html, url: html)
+    monkeypatch.setattr(
+        "amazing_web_url_reader._summarize_single_pass",
+        lambda text, tokens, host, model: "summary\x00\u202ebad",
+    )
+
+    result = await awur.handle_call_tool(
+        name="read_web_url_amazing",
+        arguments={
+            "url": "https://example.com",
+            "use_ollama_summarization": True,
+            "summary_target_tokens": 1,
+            "ollama_model": "fake",
+        },
+    )
+
+    payload = json.loads(result[0].text)
+    assert payload["content"] == "summarybad"
+
+
+@pytest.mark.asyncio
 async def test_handle_list_tools_declares_reader_tool():
     tools = await awur.handle_list_tools()
     tool_names = {tool.name for tool in tools}
     assert "read_web_url_amazing" in tool_names
+    schema = tools[0].inputSchema
+    assert schema["properties"]["character_set"]["default"] == "safe_unicode"
 
 
 @pytest.mark.asyncio

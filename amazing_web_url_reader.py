@@ -71,6 +71,8 @@ The tool accepts these parameters:
 - scroll_to_bottom: Whether to scroll to bottom to trigger lazy loading (optional, default: true)
 - truncate: Whether to truncate the output (optional, default: true)
 - max_length: Max characters when truncating (optional, default: 100000)
+- character_set: Output character constraint: safe_unicode, unicode, or ascii
+  (optional, default: safe_unicode)
 
 Summarization (optional):
 - use_ollama_summarization: Enable Ollama-based LLM summarization (default: false)
@@ -86,10 +88,10 @@ Environment variables:
 
 Requirements (automatically handled by uv):
 --------------------------------------------
-- mcp>=1.0.0
-- playwright>=1.40.0
-- beautifulsoup4>=4.9.0
-- lxml>=4.9.0
+- mcp>=1.2.0
+- playwright>=1.48.0
+- beautifulsoup4>=4.12.3
+- lxml>=5.1.0
 
 Notes:
 ------
@@ -104,10 +106,10 @@ License: Apache
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#   "mcp>=1.0.0",
-#   "playwright>=1.40.0",
-#   "beautifulsoup4>=4.9.0",
-#   "lxml>=4.9.0",
+#   "mcp>=1.2.0",
+#   "playwright>=1.48.0",
+#   "beautifulsoup4>=4.12.3",
+#   "lxml>=5.1.0",
 # ]
 # ///
 
@@ -118,6 +120,7 @@ import os
 import re
 import stat as _stat
 import sys
+import unicodedata
 from typing import Any
 from urllib import request as urllib_request
 from urllib.error import HTTPError, URLError
@@ -191,6 +194,28 @@ DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
+DEFAULT_CHARACTER_SET = "safe_unicode"
+CHARACTER_SETS = {"safe_unicode", "unicode", "ascii"}
+REMOVED_FORMAT_CHARS = {
+    "\u00ad",  # soft hyphen
+    "\u061c",  # Arabic letter mark
+    "\u200b",  # zero width space
+    "\u200c",  # zero width non-joiner
+    "\u200d",  # zero width joiner
+    "\u200e",  # left-to-right mark
+    "\u200f",  # right-to-left mark
+    "\u202a",  # left-to-right embedding
+    "\u202b",  # right-to-left embedding
+    "\u202c",  # pop directional formatting
+    "\u202d",  # left-to-right override
+    "\u202e",  # right-to-left override
+    "\u2060",  # word joiner
+    "\u2066",  # left-to-right isolate
+    "\u2067",  # right-to-left isolate
+    "\u2068",  # first strong isolate
+    "\u2069",  # pop directional isolate
+    "\ufeff",  # byte order mark
+}
 
 
 def _get_preferred_accept_header() -> str:
@@ -199,6 +224,63 @@ def _get_preferred_accept_header() -> str:
     if header and header.strip():
         return header.strip()
     return DEFAULT_ACCEPT_HEADER
+
+
+def _get_http_status_code(response: Any) -> int | None:
+    """Best-effort HTTP status extraction for urllib and Playwright responses."""
+    if response is None:
+        return None
+
+    status = getattr(response, "status", None)
+    if status is None:
+        getcode = getattr(response, "getcode", None)
+        if callable(getcode):
+            try:
+                status = getcode()
+            except Exception:
+                status = None
+
+    try:
+        return int(status) if status is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_noncharacter(char: str) -> bool:
+    codepoint = ord(char)
+    return 0xFDD0 <= codepoint <= 0xFDEF or (codepoint & 0xFFFE) == 0xFFFE
+
+
+def _clean_text_for_character_set(text: str, character_set: str = DEFAULT_CHARACTER_SET) -> str:
+    """Constrain model-facing text while preserving useful Unicode by default."""
+    if character_set == "unicode":
+        return text
+
+    normalized = unicodedata.normalize("NFC", text.replace("\r\n", "\n").replace("\r", "\n"))
+    cleaned: list[str] = []
+    for char in normalized:
+        if char in "\n\t":
+            cleaned.append(char)
+            continue
+
+        category = unicodedata.category(char)
+        if (
+            category in {"Cc", "Cs", "Co", "Cn"}
+            or char in REMOVED_FORMAT_CHARS
+            or _is_noncharacter(char)
+        ):
+            continue
+
+        cleaned.append(char)
+
+    safe_text = "".join(cleaned)
+    if character_set == "ascii":
+        return (
+            unicodedata.normalize("NFKD", safe_text)
+            .encode("ascii", errors="ignore")
+            .decode("ascii")
+        )
+    return safe_text
 
 
 def _fetch_native_markdown(url: str) -> tuple[str, dict[str, Any]] | None:
@@ -237,6 +319,7 @@ def _fetch_native_markdown(url: str) -> tuple[str, dict[str, Any]] | None:
                 markdown_content = body.decode("utf-8", errors="replace")
 
             meta: dict[str, Any] = {"source_content_type": content_type}
+            meta["http_status_code"] = _get_http_status_code(response)
             markdown_tokens = response.headers.get("X-Markdown-Tokens")
             if markdown_tokens is not None:
                 try:
@@ -463,7 +546,7 @@ async def fetch_with_playwright(
     wait_for_selector: str | None = None,
     wait_time: int = 2000,
     scroll_to_bottom: bool = True,
-) -> str:
+) -> tuple[str, dict[str, Any]]:
     """Fetch and render URL using Playwright browser."""
     browser = await get_browser()
     context = await browser.new_context(
@@ -478,7 +561,8 @@ async def fetch_with_playwright(
     try:
         # Navigate to the page with smart timeout
         timeout = get_smart_timeout(url)
-        await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+        response = await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+        meta: dict[str, Any] = {"http_status_code": _get_http_status_code(response)}
 
         # Wait for specific selector if provided
         if wait_for_selector:
@@ -526,7 +610,7 @@ async def fetch_with_playwright(
         # Get the fully rendered HTML
         content = await page.content()
 
-        return content
+        return content, meta
 
     finally:
         await context.close()
@@ -856,6 +940,17 @@ async def handle_list_tools() -> list[types.Tool]:
                         "description": "Max characters when truncating (default: 100000)",
                         "default": 100000,
                     },
+                    "character_set": {
+                        "type": "string",
+                        "description": (
+                            "Output character constraint: safe_unicode strips "
+                            "pathological controls while preserving normal Unicode; "
+                            "unicode leaves text unchanged; ascii drops non-ASCII "
+                            "characters (default: safe_unicode)"
+                        ),
+                        "enum": sorted(CHARACTER_SETS),
+                        "default": DEFAULT_CHARACTER_SET,
+                    },
                     "use_ollama_summarization": {
                         "type": "boolean",
                         "description": (
@@ -908,6 +1003,7 @@ async def handle_call_tool(
     summary_target_tokens = arguments.get("summary_target_tokens")
     ollama_host_arg = arguments.get("ollama_host")
     ollama_model_arg = arguments.get("ollama_model")
+    character_set = arguments.get("character_set", DEFAULT_CHARACTER_SET)
 
     try:
         # Validate URL
@@ -920,6 +1016,10 @@ async def handle_call_tool(
 
         if not (url.startswith("http://") or url.startswith("https://")):
             raise ValueError("url must start with http:// or https://")
+
+        if not isinstance(character_set, str) or character_set not in CHARACTER_SETS:
+            choices = ", ".join(sorted(CHARACTER_SETS))
+            raise ValueError(f"character_set must be one of: {choices}")
 
         # Validate URL format
         try:
@@ -938,13 +1038,16 @@ async def handle_call_tool(
             render_meta = {"render_method": "native_markdown", **native_meta}
             logger.info("Using native markdown response for %s", url)
         else:
-            html_content = await fetch_with_playwright(
+            html_content, playwright_meta = await fetch_with_playwright(
                 url,
                 wait_for_selector=wait_for_selector,
                 wait_time=wait_time,
                 scroll_to_bottom=scroll_to_bottom,
             )
+            render_meta = {"render_method": "playwright", **playwright_meta}
             markdown_content = _html_to_markdown_advanced(html_content, url)
+
+        markdown_content = _clean_text_for_character_set(markdown_content, character_set)
 
         # Summarization (optional)
         meta = {
@@ -1005,7 +1108,7 @@ async def handle_call_tool(
                             markdown_content, summary_target_tokens, effective_host, effective_model
                         )
 
-                    summary = summary.strip()
+                    summary = _clean_text_for_character_set(summary.strip(), character_set)
                     summary_tokens = _estimate_tokens_from_text(summary)
                     if (
                         summary_tokens < summary_target_tokens
@@ -1055,10 +1158,12 @@ async def handle_call_tool(
                         "scroll_to_bottom": scroll_to_bottom,
                         "truncate": truncate,
                         "max_length": max_length,
+                        "character_set": character_set,
                         **render_meta,
                         **meta,
                     },
                     indent=2,
+                    ensure_ascii=False,
                 ),
             )
         ]
@@ -1069,8 +1174,14 @@ async def handle_call_tool(
             types.TextContent(
                 type="text",
                 text=json.dumps(
-                    {"error": str(e), "url": url if "url" in locals() else None, "status": "error"},
+                    {
+                        "error": str(e),
+                        "url": url if "url" in locals() else None,
+                        "status": "error",
+                        "http_status_code": None,
+                    },
                     indent=2,
+                    ensure_ascii=False,
                 ),
             )
         ]
@@ -1080,8 +1191,14 @@ async def handle_call_tool(
             types.TextContent(
                 type="text",
                 text=json.dumps(
-                    {"error": f"Web URL reading failed: {str(e)}", "url": url, "status": "error"},
+                    {
+                        "error": f"Web URL reading failed: {str(e)}",
+                        "url": url,
+                        "status": "error",
+                        "http_status_code": None,
+                    },
                     indent=2,
+                    ensure_ascii=False,
                 ),
             )
         ]
