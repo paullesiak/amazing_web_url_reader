@@ -114,6 +114,7 @@ License: Apache
 # ///
 
 import asyncio
+import gzip
 import json
 import logging
 import os
@@ -121,6 +122,7 @@ import re
 import stat as _stat
 import sys
 import unicodedata
+import zlib
 from typing import Any
 from urllib import request as urllib_request
 from urllib.error import HTTPError, URLError
@@ -246,6 +248,34 @@ def _get_http_status_code(response: Any) -> int | None:
         return None
 
 
+def _decode_content_encoding(body: bytes, content_encoding: str) -> bytes | None:
+    """Decode HTTP Content-Encoding layers, returning None for unsupported encodings."""
+    encodings = [part.strip().lower() for part in content_encoding.split(",") if part.strip()]
+    if not encodings and body.startswith(b"\x1f\x8b\x08"):
+        encodings = ["gzip"]
+
+    for encoding in reversed(encodings):
+        if encoding == "identity":
+            continue
+        if encoding == "gzip":
+            try:
+                body = gzip.decompress(body)
+            except OSError:
+                return None
+        elif encoding == "deflate":
+            try:
+                body = zlib.decompress(body)
+            except zlib.error:
+                try:
+                    body = zlib.decompress(body, -zlib.MAX_WBITS)
+                except zlib.error:
+                    return None
+        else:
+            return None
+
+    return body
+
+
 def _is_noncharacter(char: str) -> bool:
     codepoint = ord(char)
     return 0xFDD0 <= codepoint <= 0xFDEF or (codepoint & 0xFFFE) == 0xFFFE
@@ -294,6 +324,7 @@ def _fetch_native_markdown(url: str) -> tuple[str, dict[str, Any]] | None:
         url,
         headers={
             "Accept": accept_header,
+            "Accept-Encoding": "identity",
             "User-Agent": DEFAULT_USER_AGENT,
         },
     )
@@ -313,12 +344,26 @@ def _fetch_native_markdown(url: str) -> tuple[str, dict[str, Any]] | None:
             charset_match = re.search(r"charset=([^;]+)", content_type, flags=re.IGNORECASE)
             charset = charset_match.group(1).strip().strip('"') if charset_match else "utf-8"
             body = response.read()
+            content_encoding = response.headers.get("Content-Encoding", "")
+            decoded_body = _decode_content_encoding(body, content_encoding)
+            if decoded_body is None:
+                logger.info(
+                    "Direct markdown fetch returned unsupported or invalid Content-Encoding %r "
+                    "for %s; falling back to Playwright",
+                    content_encoding or "unknown",
+                    url,
+                )
+                return None
+            body = decoded_body
+
             try:
                 markdown_content = body.decode(charset)
             except (LookupError, UnicodeDecodeError):
                 markdown_content = body.decode("utf-8", errors="replace")
 
             meta: dict[str, Any] = {"source_content_type": content_type}
+            if content_encoding:
+                meta["source_content_encoding"] = content_encoding
             meta["http_status_code"] = _get_http_status_code(response)
             markdown_tokens = response.headers.get("X-Markdown-Tokens")
             if markdown_tokens is not None:

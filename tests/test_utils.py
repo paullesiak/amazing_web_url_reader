@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import gzip
 import os
+import zlib
 from unittest.mock import patch
 from urllib.error import HTTPError
 
@@ -97,6 +99,78 @@ def test_fetch_native_markdown_success(mock_urlopen):
         "http_status_code": 203,
         "markdown_tokens": 42,
     }
+
+
+@patch("amazing_web_url_reader.urllib_request.urlopen")
+def test_fetch_native_markdown_decompresses_gzip(mock_urlopen):
+    mock_urlopen.return_value = _FakeResponse(
+        gzip.compress(b"# Native\n\nHello"),
+        {
+            "Content-Type": "text/markdown; charset=utf-8",
+            "Content-Encoding": "gzip",
+        },
+    )
+
+    with patch.dict(os.environ, {}, clear=True):
+        result = _fetch_native_markdown("https://example.com/article")
+
+    assert result is not None
+    content, meta = result
+    assert content == "# Native\n\nHello"
+    assert meta["source_content_encoding"] == "gzip"
+    request = mock_urlopen.call_args.args[0]
+    assert request.headers["Accept-encoding"] == "identity"
+
+
+@patch("amazing_web_url_reader.urllib_request.urlopen")
+def test_fetch_native_markdown_decompresses_gzip_magic_without_header(mock_urlopen):
+    mock_urlopen.return_value = _FakeResponse(
+        gzip.compress(b"# Native\n\nHello"),
+        {"Content-Type": "text/markdown; charset=utf-8"},
+    )
+
+    with patch.dict(os.environ, {}, clear=True):
+        result = _fetch_native_markdown("https://example.com/article")
+
+    assert result is not None
+    content, meta = result
+    assert content == "# Native\n\nHello"
+    assert "source_content_encoding" not in meta
+
+
+@patch("amazing_web_url_reader.urllib_request.urlopen")
+def test_fetch_native_markdown_decompresses_raw_deflate(mock_urlopen):
+    compressor = zlib.compressobj(wbits=-zlib.MAX_WBITS)
+    body = compressor.compress(b"# Native\n\nHello") + compressor.flush()
+    mock_urlopen.return_value = _FakeResponse(
+        body,
+        {
+            "Content-Type": "text/markdown; charset=utf-8",
+            "Content-Encoding": "deflate",
+        },
+    )
+
+    with patch.dict(os.environ, {}, clear=True):
+        result = _fetch_native_markdown("https://example.com/article")
+
+    assert result is not None
+    content, meta = result
+    assert content == "# Native\n\nHello"
+    assert meta["source_content_encoding"] == "deflate"
+
+
+@patch("amazing_web_url_reader.urllib_request.urlopen")
+def test_fetch_native_markdown_returns_none_for_unsupported_encoding(mock_urlopen):
+    mock_urlopen.return_value = _FakeResponse(
+        b"compressed bytes",
+        {
+            "Content-Type": "text/markdown; charset=utf-8",
+            "Content-Encoding": "br",
+        },
+    )
+
+    with patch.dict(os.environ, {}, clear=True):
+        assert _fetch_native_markdown("https://example.com/article") is None
 
 
 def test_clean_text_for_character_set_preserves_useful_unicode():
